@@ -156,6 +156,16 @@ class Watcher(threading.Thread):
         self.shown = False
         self.lock = threading.Lock()
         self.stop_flag = False
+        # 「停稳」追踪：把驻留时长算在光标停下来之后，而不是「识别到词之后」——
+        # OCR 面识别本身要 1~2 秒，若再从识别完开始算 2 秒，总延迟就翻倍了。
+        self._px, self._py = -9999, -9999
+        self._stop_since = 0.0
+        self._mov = 8                  # 判定「移动了」的像素阈值（按屏幕 DPI 缩放）
+        try:
+            sc = ctypes.windll.user32.GetDpiForSystem() / 96.0
+            self._mov = max(8, int(8 * sc))
+        except Exception:
+            pass
 
     def run(self):
         # UIA 依赖 COM：非主线程必须显式 CoInitialize，否则 uiautomation 每次调用都报
@@ -165,13 +175,16 @@ class Watcher(threading.Thread):
         except Exception:
             pass
         while not self.stop_flag:
-            time.sleep(0.12)
+            time.sleep(0.06)           # 轮询间隔：取词结果有缓存，快轮询 = 反应更跟手
             if not self.cfg.get("enabled", True):
                 with self.lock:
                     self.word, self.shown = None, False
                 continue
             x, y = cursor_pos()
             t_poll = time.time()
+            # 光标停稳了吗？（相对上次停稳点移动超过阈值 = 重新计停稳起点）
+            if abs(x - self._px) > self._mov or abs(y - self._py) > self._mov:
+                self._px, self._py, self._stop_since = x, y, t_poll
             with self.lock:
                 if self.shown:
                     # 快速收起：光标明显移开（>28px，微动不算）或单击 → 立即收起，
@@ -206,13 +219,13 @@ class Watcher(threading.Thread):
                         self._dwell = float((self.cfg.get("imageOcr") or {}).get("dwellMs", 1500)) / 1000.0
                     else:
                         self._dwell = float(self.cfg.get("dwellMs", 5000)) / 1000.0
-                    self.word, self.anchor, self.since = word, (x, y), now
+                    self.word, self.anchor, self.since = word, (x, y), (self._stop_since or now)
                     continue
                 if self.shown:
                     continue
                 if now - self.since < self._dwell:
-                    # 「不动才翻译」：驻留期间光标明显移动（>8px，微抖不算）→ 重新驻留
-                    if abs(x - self.anchor[0]) > 8 or abs(y - self.anchor[1]) > 8:
+                    # 「不动才翻译」：驻留期间光标明显移动（超阈值，微抖不算）→ 重新驻留
+                    if abs(x - self.anchor[0]) > self._mov or abs(y - self.anchor[1]) > self._mov:
                         self.anchor, self.since = (x, y), now
                     continue
                 self.shown = True

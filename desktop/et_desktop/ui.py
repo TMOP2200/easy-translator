@@ -34,19 +34,36 @@ MAX_W = 340
 _FONTS = {}
 
 
-def _font_path(cjk: bool) -> str:
+def _font_path(kind) -> str:
+    """按字体族取字体文件：cjk=雅黑、latin=Segoe UI、sym=Segoe UI Symbol。
+
+    sym 这一族是必须的：数学符号（ℱ ℬ ℝ 𝔼 𝒩 𝝀 𝟙 ∑ ∫）在雅黑和 Segoe UI 里都没有字形，
+    不单独派字体就会绘制成 □（用户报的方框）。"""
+    if kind is True:
+        kind = "cjk"
+    elif kind is False:
+        kind = "latin"
     win = os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts")
-    for name in (("msyh.ttc", "msyhbd.ttc") if cjk else ("segoeui.ttf", "seguisb.ttf")):
+    table = {
+        "cjk": ("msyh.ttc", "msyhbd.ttc"),
+        "latin": ("segoeui.ttf", "seguisb.ttf"),
+        "sym": ("seguisym.ttf", "seguisym.ttf", "cambria.ttc", "segoeui.ttf"),
+    }
+    for name in table.get(kind, table["latin"]):
         p = os.path.join(win, name)
         if os.path.exists(p):
             return p
     return os.path.join(win, "arial.ttf")
 
 
-def font(size: int, bold: bool = False, cjk: bool = True) -> ImageFont.FreeTypeFont:
-    key = (size, bold, cjk)
+def font(size: int, bold: bool = False, kind="cjk") -> ImageFont.FreeTypeFont:
+    if kind is True:
+        kind = "cjk"
+    elif kind is False:
+        kind = "latin"
+    key = (size, bold, kind)
     if key not in _FONTS:
-        _FONTS[key] = ImageFont.truetype(_font_path(cjk) if not bold else _font_path(cjk), size=size)
+        _FONTS[key] = ImageFont.truetype(_font_path(kind), size=size)
     return _FONTS[key]
 
 
@@ -58,30 +75,47 @@ def _is_cjk(ch: str) -> bool:
             or 0xAC00 <= o <= 0xD7AF or 0xFF00 <= o <= 0xFFEF or 0xFE30 <= o <= 0xFE4F)
 
 
+def _is_symbol(ch: str) -> bool:
+    """数学/符号区：雅黑与 Segoe UI 都没有这些字形，得走 Segoe UI Symbol。"""
+    o = ord(ch)
+    return (0x2100 <= o <= 0x214F          # ℒ ℱ ℬ ℝ ℕ ℤ ℙ ℂ ℯ …
+            or 0x1D400 <= o <= 0x1D7FF     # 𝒩 𝔼 𝔤 𝝀 𝜽 𝟙（数学字母数字符号）
+            or 0x2190 <= o <= 0x21FF       # 箭头 ↔ ⟶
+            or 0x2200 <= o <= 0x22FF       # ∑ ∫ ≈ √ ∞ ∈ ∅
+            or 0x27C0 <= o <= 0x27EF or 0x2980 <= o <= 0x29FF
+            or 0x2A00 <= o <= 0x2AFF or 0x2B00 <= o <= 0x2BFF)
+
+
+def _kind_of(ch: str) -> str:
+    if _is_symbol(ch):
+        return "sym"
+    return "cjk" if _is_cjk(ch) else "latin"
+
+
 def _runs(text: str):
-    """按书写系统切分，中文用雅黑、西文/IPA 用 Segoe UI（雅黑缺 IPA 字形）。"""
-    out, cur, cur_cjk = [], [], None
+    """按字体族切分：中文→雅黑，西文/IPA→Segoe UI，数学符号→Segoe UI Symbol。"""
+    out, cur, cur_kind = [], [], None
     for ch in text:
-        c = _is_cjk(ch)
-        if cur_cjk is None or c == cur_cjk or ch == ' ':
-            if ch == ' ' and cur and cur_cjk is not None:
-                cur.append(ch)
-                continue
+        if ch == " " and cur:               # 空格跟着前一段走
             cur.append(ch)
-            cur_cjk = c if cur_cjk is None else cur_cjk
             continue
-        out.append(("".join(cur), cur_cjk))
-        cur, cur_cjk = [ch], c
+        k = _kind_of(ch)
+        if cur_kind is None or k == cur_kind:
+            cur.append(ch)
+            cur_kind = k
+            continue
+        out.append(("".join(cur), cur_kind))
+        cur, cur_kind = [ch], k
     if cur:
-        out.append(("".join(cur), cur_cjk))
+        out.append(("".join(cur), cur_kind))
     return out
 
 
 def _draw_line(draw: ImageDraw.ImageDraw, xy, text: str, size: int, bold: bool, color):
-    """混排绘制：中文与西文各用其字体，逐段排布。返回总宽。"""
+    """混排绘制：中文 / 西文 / 数学符号 各用其字体，逐段排布。返回总宽。"""
     x, y = xy
-    for chunk, cjk in _runs(text):
-        f = font(size, bold, cjk)
+    for chunk, kind in _runs(text):
+        f = font(size, bold, kind)
         draw.text((x, y), chunk, font=f, fill=color)
         x += draw.textlength(chunk, font=f)
     return x - xy[0]
@@ -89,8 +123,8 @@ def _draw_line(draw: ImageDraw.ImageDraw, xy, text: str, size: int, bold: bool, 
 
 def _line_width(draw, text, size, bold=False) -> float:
     w = 0.0
-    for chunk, cjk in _runs(text):
-        w += draw.textlength(chunk, font=font(size, bold, cjk))
+    for chunk, kind in _runs(text):
+        w += draw.textlength(chunk, font=font(size, bold, kind))
     return w
 
 

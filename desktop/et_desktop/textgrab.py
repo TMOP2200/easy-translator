@@ -27,8 +27,27 @@ except Exception:                     # 未装依赖时仍可只用 OCR 兜底
 
 TEXTUNIT_WORD = 2                     # IUIAutomation TextUnit_Word
 
+# UIA 走树单次要 ~500ms（实测 513ms），而守护每轮轮询都要调一次——驻留 2 秒 = 十几轮，
+# 光这一项就吃掉 2 秒以上。按 12px 网格缓存一小段时间，驻留期间的轮询变成内存命中。
+_UIA_CACHE: dict = {}
+_UIA_TTL = 1.5
+
 
 def word_at_point_uia(x: int, y: int):
+    """（带网格缓存）落点 → (单词, 是否看到文字)。"""
+    key = (int(x) // 12, int(y) // 12)
+    now = time.time()
+    hit = _UIA_CACHE.get(key)
+    if hit is not None and now - hit[0] < _UIA_TTL:
+        return hit[1], hit[2]
+    word, saw = _word_at_point_uia_uncached(x, y)
+    if len(_UIA_CACHE) > 512:
+        _UIA_CACHE.clear()
+    _UIA_CACHE[key] = (now, word, saw)
+    return word, saw
+
+
+def _word_at_point_uia_uncached(x: int, y: int):
     """落点 → (单词, 是否看到文字)。
 
     第二个返回值很关键：辅助功能说「这里有文字，但不是英文」时，
@@ -153,7 +172,7 @@ def word_at_point_ocr(x: int, y: int, cfg: dict):
     hit = _OCR_CACHE.get(key)
     if hit is not None:
         ts, w = hit
-        if w and now - ts < 2.5:
+        if w and now - ts < 30:      # 同一个词：30 秒内重悬停直接命中，不再打模型
             return w
         if not w and now - ts < 30:
             return None
