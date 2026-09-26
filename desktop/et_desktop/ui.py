@@ -26,7 +26,7 @@ MARGIN = 2                        # 气泡描边外留白
 BORDER = 2                        # 描边宽
 RADIUS = 18
 PAD_X, PAD_Y = 15, 13
-MASCOT_W = 58
+MASCOT_W = 72
 GUTTER = 26                       # 气泡与她之间的天沟
 BOTTOM = 34                       # 底部留给她的高度
 MAX_W = 340
@@ -294,7 +294,15 @@ class Bubble(tk.Toplevel):
         view_h = int(min(h, vh * self.MAX_H_RATIO))
         self.canvas.configure(scrollregion=(0, 0, w, h))
         left = x + 14 if x + 14 + w + 10 < vw else max(4, x - w - 24)
-        top = y + 18 if y + 18 + view_h < vh else max(4, y - view_h - 18)
+        # 优先放光标**上方**：原生悬停提示（VS Code 悬停说明、浏览器提示、系统 tooltip）
+        # 几乎都出现在光标下方，放上方就不会盖住它们；上方放不下才落到下方。
+        gap = 18
+        if y - view_h - gap >= 4:
+            top = y - view_h - gap
+        elif y + gap + view_h < vh:
+            top = y + gap
+        else:
+            top = max(4, y - view_h - gap)
         self.geometry(f"{w + 10}x{view_h}+{int(left)}+{int(top)}")
         self.canvas.yview_moveto(0)          # 每次都从顶部开始看
         self.deiconify()
