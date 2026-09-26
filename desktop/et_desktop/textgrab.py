@@ -18,7 +18,7 @@ import urllib.request
 
 from PIL import Image, ImageDraw
 
-from .lookup import extract_word_at, is_english_word
+from .lookup import extract_word_at, is_english_word, is_letter_like
 
 try:
     import uiautomation as auto
@@ -63,13 +63,22 @@ def word_at_point_uia(x: int, y: int):
             if not got:
                 return None, False
             # 「点空白处不翻译」：ExpandToEnclosingUnit 会把落点扩展成邻近的词，
-            # 光标在词间空白上时也会抓到旁边的词。校验词的边界矩形确实包含光标，
-            # 不包含 = 光标在空白处 → 当作有文字但没指到词，静默（不走 OCR）。
+            # 光标在词间空白上时也会抓到旁边的词。校验词的边界矩形确实包含光标。
             try:
                 rects = rng.GetBoundingRectangles()
-                if rects and not any(r.left - 4 <= x <= r.right + 4 and
-                                     r.top - 4 <= y <= r.bottom + 4 for r in rects):
-                    return None, True
+                if rects:
+                    inside = any(r.left - 4 <= x <= r.right + 4 and
+                                 r.top - 4 <= y <= r.bottom + 4 for r in rects)
+                    if not inside:
+                        # 离得近（词间空白/词缝）→ 按产品铁律静默；
+                        # 离得远（>120px）→ 这个控件的文字坐标映射不可信
+                        #   （Electron/Chromium 带缩放变换、PDF 阅读器常见），
+                        #   报「这里没文字」，交给 OCR 按像素读光标下的真实文字。
+                        gap = min(max(max(r.left - x, x - r.right),
+                                      max(r.top - y, y - r.bottom)) for r in rects)
+                        if gap > 120:
+                            return None, False
+                        return None, True
             except Exception:
                 pass
             # 取回来的可能是「词 + 尾随空格」甚至标点，统一过取词闸门
@@ -79,6 +88,9 @@ def word_at_point_uia(x: int, y: int):
             for cand in _tokenize(got):
                 if is_english_word(cand):
                     return cand, True
+            for ch in got:                 # 希腊字母 / 花体·双线体等变体字母：内置表有读音
+                if is_letter_like(ch):
+                    return ch, True
             return None, True              # 有文字但不是英文 → 静默
         try:
             node = node.GetParentControl()
@@ -161,9 +173,13 @@ def word_at_point_ocr(x: int, y: int, cfg: dict):
         png = buf.getvalue()
     except Exception:
         pass
-    prompt = ("图中的红色叉号是鼠标位置。输出红叉所指的那个英文单词："
-              "有就输出 {\"word\":\"单词\"}，红叉下面没有英文单词就输出 {\"word\":null}。"
-              "只输出这一个 JSON，不要解释。")
+    prompt = ("图中红叉位于某个字符上。按下面规则只输出一个 JSON，不要解释：\n"
+              "- 红叉压在英文字母上 → 输出它所在的**完整英文单词**：{\"word\":\"word\"}\n"
+              "- 若那里是一个孤立的单个字母（数学变量，如 F X n，也可能写成花体 ℱ ℒ 𝒩）"
+              "→ 输出这个字母本身：{\"word\":\"F\"}\n"
+              "- 红叉压在希腊字母上 → 原样输出该字母（如 Ω α λ β）：{\"word\":\"Ω\"}\n"
+              "- 红叉压在花体/双线体/哥特体字母上（如 ℒ ℝ 𝔼 𝒩 𝔤 𝓛 ℱ）→ 原样输出该字符：{\"word\":\"ℒ\"}\n"
+              "- 红叉压在中文/数字/标点/空白上 → {\"word\":null}")
     body = {
         "model": model, "temperature": 0, "max_tokens": 60,
         "messages": [{"role": "user", "content": [
@@ -186,8 +202,13 @@ def word_at_point_ocr(x: int, y: int, cfg: dict):
     from .lookup import normalize_model, extract_json
     obj = extract_json(content) if isinstance(content, str) else None
     if isinstance(obj, dict) and isinstance(obj.get("word"), str):
-        w = obj["word"].strip()
-        w = w if is_english_word(w) else None
+        w = obj["word"].strip().strip("`").strip()
+        if w.lower() in ("null", "none", "nan", "无", "没有", "—", "-"):
+            w = ""                       # 模型有时把 JSON null 写成字符串 "null"
+        w = w if (is_english_word(w) or is_letter_like(w)
+                  or (len(w) == 1 and w.isascii() and w.isalpha())) else None
+        # 末尾那项：图片/PDF 里的孤立单字母（数学变量 F、X、n…）——文字取词那边单字母
+        # 仍按产品规则不触发，这里只放开 OCR 路径（需要在图上停住才会走到）。
         _OCR_CACHE[key] = (now, w)
         return w
     _OCR_CACHE[key] = (now, None)
