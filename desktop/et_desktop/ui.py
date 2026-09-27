@@ -318,6 +318,17 @@ class Bubble(tk.Toplevel):
     def _wheel(self, e):
         self.canvas.yview_scroll(-int((e.delta or 0) / 120), "units")
 
+    def point_in_bubble(self, x: int, y: int, pad: int = 8) -> bool:
+        """光标是否在气泡窗口范围内（存下来的矩形，供工作线程安全读取）。
+
+        用来判断「鼠标移开」该不该收起：只要还在气泡上／气泡边上（用户正想过去看或点复制），
+        就不收起——不然鼠标刚往气泡方向挪一点，卡片就先消失了。"""
+        r = getattr(self, "_rect", None)
+        if not r:
+            return False
+        bx, by, bw, bh = r
+        return (bx - pad <= x <= bx + bw + pad) and (by - pad <= y <= by + bh + pad)
+
     def show(self, img: Image.Image, x: int, y: int):
         self._photo = ImageTk.PhotoImage(img.convert("RGB"))
         self.canvas.delete("all")
@@ -338,6 +349,8 @@ class Bubble(tk.Toplevel):
         else:
             top = max(4, y - view_h - gap)
         self.geometry(f"{w + 10}x{view_h}+{int(left)}+{int(top)}")
+        # 记下矩形：工作线程靠它判断「光标是不是还在卡片上」（Tk 控件不能跨线程访问）
+        self._rect = (int(left), int(top), w + 10, view_h)
         self.canvas.yview_moveto(0)          # 每次都从顶部开始看
         self.deiconify()
         self.lift()
@@ -355,4 +368,5 @@ class Bubble(tk.Toplevel):
             pass
 
     def hide(self):
+        self._rect = None
         self.withdraw()

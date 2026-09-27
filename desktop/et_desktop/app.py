@@ -187,11 +187,16 @@ class Watcher(threading.Thread):
                 self._px, self._py, self._stop_since = x, y, t_poll
             with self.lock:
                 if self.shown:
-                    # 快速收起：光标明显移开（>28px，微动不算）或单击 → 立即收起，
-                    # 不等下面那轮可能耗时 1-2 秒的 OCR。钉在气泡上时（pinned）不收起。
+                    # 快速收起：光标明显移开或单击 → 立即收起，不等下面那轮可能耗时 1-2 秒的
+                    # OCR。但只要光标还在气泡上／气泡附近（用户正想过去看或点复制），就不收起。
                     pinned = self.panel.is_pinned()
-                    moved = abs(x - self.anchor[0]) > 28 or abs(y - self.anchor[1]) > 28
-                    if not pinned and (moved or _lbutton_down()):
+                    moved = abs(x - self.anchor[0]) > 32 or abs(y - self.anchor[1]) > 32
+                    near = False
+                    try:
+                        near = self.panel.point_in_bubble(x, y)
+                    except Exception:
+                        near = False
+                    if not pinned and not near and (moved or _lbutton_down()):
                         self.shown = False
                         self.word, self.since = None, t_poll
                         self._schedule_hide()
