@@ -13,6 +13,8 @@ store/*.zip
 __pycache__/
 *.py[cod]
 desktop/.venv/
+# PyInstaller 中间产物（exe 在 desktop/dist/，已由上面的 dist/ 覆盖）
+desktop/build/
 
 # 系统与编辑器
 .DS_Store
@@ -27,3 +29,10 @@ desktop/ocr_dump.on
 
 # 游戏标记：游戏守护写入，取词守护读到就整条链停工（不该提交）
 desktop/gaming.flag
+# 桌面端源码模式的运行产物（打包版写到 %APPDATA%\EasyTranslator）
+desktop/daemon.log
+desktop/lookup_trace.log
+desktop/selftest.txt
+
+# NVIDIA/NVAPI 自动化日志（会写进运行目录，不该入库）
+@AutomationLog.txt

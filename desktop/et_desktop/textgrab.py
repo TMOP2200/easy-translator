@@ -13,6 +13,7 @@ import base64
 import io
 import json
 import os
+import sys
 import time
 import urllib.request
 
@@ -256,24 +257,21 @@ COMPOUND_PROMPT = ("图中有一个红色圆圈（鼠标标记，不是字符）
                    "只输出一个 JSON：{\"word\":\"...\"}；没有可读的英文单词则 {\"word\":null}。")
 _POS_SPOT = None               # (x, y, word)：识别成功的位置（光标没移开就复用）
 _FAIL_SPOT = None              # (x, y)：识别失败的位置（光标没移开就不重试）
-# 游戏守护标记（游戏守护写文件）：文件存在时**整条取词链停工** —— 不查 UIA、
-# 不打 OCR、不弹卡片，避免游戏期间被抢 CPU/显存。
-# 优先用环境变量（start_daemon.vbs 会设），否则退回守护目录旁的 gaming.flag：
-# 无论进程是怎么被拉起来的（vbs / 手动 / 自愈重启）都能生效。
-GAMING_FLAG = os.environ.get("ET_GAMING_FLAG")
-GAMING_FLAG_LOCAL = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                 os.pardir, "gaming.flag")
 
 
 def gaming_now() -> bool:
-    """现在是否在打游戏（游戏守护写了标记文件）。两条路径任一命中即视为游戏中。"""
-    for p in (os.environ.get("ET_GAMING_FLAG"), GAMING_FLAG, GAMING_FLAG_LOCAL):
-        try:
-            if p and os.path.exists(p):
-                return True
-        except Exception:
-            pass
-    return False
+    """现在是否在打游戏 —— **纯内存态**，由 gamewatch 线程在进程内检测。
+
+    判定：前台全屏应用（无标题栏 / 真铺满）+ 显卡利用率 ≥30，退出要连续两次采样才恢复。
+    2026-10-04 按用户要求改成「内存看门狗」：**不读、不写任何标记文件** ——
+    早先那套（环境变量 ET_GAMING_FLAG + 守护目录旁 / 程序文件旁的 gaming.flag）已全部删除，
+    跨进程那种「写文件传状态」的耦合没有了，打包出去也不需要任何外部看门狗。
+    """
+    try:
+        from . import gamewatch
+        return gamewatch.is_gaming()
+    except Exception:
+        return False
 
 
 def _has_ink(img, half_w: int = 12, half_h: int = 14) -> bool:
@@ -652,7 +650,14 @@ def word_at_point_ocr(x: int, y: int, cfg: dict):
             return w
         if not w and now - ts < 30:
             return None
-    png = _grab_png(x, y)
+    # 「裁剪宽度/高度」设置真的生效（含合理区间钳制）—— 以前写死 140×56，改了没反应
+    _io = cfg.get("imageOcr") or {}
+    try:
+        cw = max(100, min(900, int(_io.get("cropW") or 460)))
+        ch = max(50, min(500, int(_io.get("cropH") or 140)))
+    except Exception:
+        cw, ch = 460, 140
+    png = _grab_png(x, y, w=cw, h=ch)
     if not png:
         return None
     try:
@@ -748,9 +753,24 @@ def word_at_point_ocr(x: int, y: int, cfg: dict):
 
 
 _TRACE_LAST = None
-# —— 排障开关：文件 desktop/ocr_dump.on 存在时，把「模型实际看到的那块图」存到 desktop/ocr_dump/ ——
-_DUMP_ON = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, "ocr_dump.on"))
-_DUMP_DIR = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, "ocr_dump"))
+
+
+def _state_dir() -> str:
+    """排障文件（轨迹/截图转储）放哪：打包后 __file__ 在 _MEIPASS 临时目录（退出即删），
+    必须改到配置目录，否则 exe 用户的排障文件永远不存在。"""
+    try:
+        if getattr(sys, "frozen", False):
+            d = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "EasyTranslator")
+            os.makedirs(d, exist_ok=True)
+            return d
+    except Exception:
+        pass
+    return os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir))
+
+
+# —— 排障开关：文件 ocr_dump.on 存在时，把「模型实际看到的那块图」存到 ocr_dump/ ——
+_DUMP_ON = os.path.join(_state_dir(), "ocr_dump.on")
+_DUMP_DIR = os.path.join(_state_dir(), "ocr_dump")
 
 
 def _dump_ocr(png, x: int, y: int, extra: str = ""):
@@ -778,8 +798,7 @@ def _dump_ocr(png, x: int, y: int, extra: str = ""):
 def _trace(msg):
     """轻量轨迹（每个新格子一行）——排查「悬停没反应」用；文件超 256KB 自动清掉。"""
     try:
-        p = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                        os.pardir, "lookup_trace.log"))
+        p = os.path.join(_state_dir(), "lookup_trace.log")
         if os.path.exists(p) and os.path.getsize(p) > 262144:
             os.remove(p)
         with open(p, "a", encoding="utf-8") as f:
@@ -810,7 +829,7 @@ def word_at_point(x: int, y: int, cfg: dict):
         if tr:
             _trace(f"({x},{y}) 静默：UIA 认为此处有文字但非英文/是词缝空白（不走 OCR）")
         return None, ""
-    word = word_at_point_ocr(x, y, (cfg or {}).get("model") or {})
+    word = word_at_point_ocr(x, y, cfg or {})
     if tr:
         _trace(f"({x},{y}) OCR={word!r} → {'出卡片' if word else '静默'}")
     if word:

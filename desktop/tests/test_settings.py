@@ -29,6 +29,13 @@ def js_defaults():
     return json.loads(out.stdout)
 
 
+class LogWordsDefaultCase(unittest.TestCase):
+    """2026-10-05：日志默认不记录悬停到的单词（日志会被发给排障者）。"""
+
+    def test_defaults_to_off(self):
+        self.assertIs(False, app_mod.DEFAULTS.get("logWords"))
+
+
 class TestSchemaParity(unittest.TestCase):
     """桌面端是扩展设置的**子集**（桌面没有 PDF/阅读器界面），但字段名必须同名、
     共有字段的默认值必须一致 —— 这样才防得住 dwell vs dwellMs 那类漂移。"""
@@ -104,37 +111,31 @@ class TestSettingsWindow(unittest.TestCase):
                      "悬停触发时长", "例句条数", "接口地址", "文本模型", "视觉模型", "超时（毫秒）"]:
             self.assertTrue(any(want in s for s in labels), f"设置窗口缺少「{want}」")
 
-        # 关键：字段必须**可见**（winfo_ismapped）。只查标签文本会漏掉
-        # 「行容器忘了 pack」——那种情况标签存在但整片字段看不见。
-        # 注意顺序：映射状态要等 update() 之后才准（先遍历会整片报 unmapped）。
+        # 判据同以前 —— 「行容器忘了 pack」会让字段 unmapped。只不过现在是**分页**，
+        # 所以要逐页切过去查：没显示的那几页本来就 unmapped，不算问题。
         win.deiconify()
         win.update_idletasks()
         win.update()
-        visible = []
+        total = 0
 
-        def walk_mapped(w):
+        def count_and_check(w):
+            n = 0
             for c in w.winfo_children():
                 if isinstance(c, (tk.Entry, tk.Checkbutton, tk.Scale, tk.Spinbox)):
-                    visible.append((type(c).__name__, bool(c.winfo_ismapped())))
-                walk_mapped(c)
-        walk_mapped(win)
-        invisible = [t for t, m in visible if not m]
-        self.assertGreaterEqual(len(visible), 12, f"字段控件太少：{visible}")
+                    n += 1
+                    if not c.winfo_ismapped():
+                        hidden.append((w.winfo_class(), type(c).__name__))
+                n += count_and_check(c)
+            return n
 
-        def chain(w):
-            out = []
-            while w is not None and str(w) != str(win):
-                try:
-                    out.append(f"{w.winfo_class()}{'M' if w.winfo_ismapped() else 'U'}"
-                               f"[{w.winfo_width()}x{w.winfo_height()}]")
-                except Exception:
-                    break
-                w = w.master
-            return " ← ".join(out)
-        dbg = [chain(c) for c in win.winfo_children()
-               if isinstance(c, tk.Frame)] if invisible else []
-        self.assertEqual([], invisible,
-                         f"这些字段没显示出来（容器忘了 pack？）：{invisible}\n祖先链：{dbg[:3]}")
+        for key in win._nav:
+            win._nav_select(key)
+            win.update()
+            hidden = []
+            total += count_and_check(win._pages[key])
+            self.assertEqual([], hidden,
+                             "「%s」页里有字段没显示出来（容器忘了 pack？）：%s" % (key, hidden))
+        self.assertGreaterEqual(total, 12, "字段控件太少（%d 个）" % total)
         win.destroy()
         root.destroy()
 

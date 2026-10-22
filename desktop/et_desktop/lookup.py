@@ -6,8 +6,11 @@
 """
 from __future__ import annotations
 
+import os
 import re
 import json
+import tempfile
+import threading
 import urllib.request
 import urllib.parse
 
@@ -163,11 +166,25 @@ def normalize_youdao(raw: dict, fallback_word: str = ""):
     return out if has else None
 
 
-def _http_json(url: str, payload: dict | None = None, headers: dict | None = None):
+def _http_json(url: str, payload: dict | None = None, headers: dict | None = None,
+               timeout: float | None = None):
     data = json.dumps(payload).encode("utf-8") if payload is not None else None
     req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json", **(headers or {})})
-    with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:
+    with urllib.request.urlopen(req, timeout=(timeout or _TIMEOUT)) as resp:
         return json.loads(resp.read().decode("utf-8"))
+
+
+def _timeout_s(*cfgs, dflt: float = 60.0) -> float:
+    """把「超时（毫秒）」配置换成秒。本地模型冷启动要 1–3 分钟 —— 默认给足 60 秒，
+    没有这个兜底时 _TIMEOUT=6 秒会让「首次查词」必然失败（模型还在加载就被掐断）。"""
+    for cfg in cfgs:
+        try:
+            v = float((cfg or {}).get("timeoutMs") or 0)
+        except Exception:
+            v = 0
+        if v > 0:
+            return max(2.0, min(600.0, v / 1000.0))
+    return dflt
 
 
 def lookup_youdao(word: str):
@@ -365,6 +382,7 @@ def lookup_model(word: str, cfg: dict):
             {"model": model, "temperature": 0.1, "max_tokens": 500,
              "messages": [{"role": "user", "content": build_model_prompt(word)}]},
             {"Authorization": "Bearer " + (cfg.get("apiKey") or "none")},
+            timeout=_timeout_s(m, cfg),        # 「超时（毫秒）」真的生效（默认 60 秒）
         )
     except Exception:
         return None
@@ -422,5 +440,52 @@ def lookup(word: str, cfg: dict):
         if got:
             return got
     if eng in ("auto", "model"):
-        return lookup_model(word, cfg.get("model") or {})
+        model_cfg = cfg.get("model") or {}
+        if model_cfg.get("enabled") is False:
+            return None                     # 设置里关掉了小模型：不调用、不加载
+        return lookup_model(word, model_cfg)
     return None
+
+
+def speak_async(word: str, cfg: dict = None, on_fail=None):
+    """点发音按钮：从有道取这个单词的读音（联网），在本机播放，播完清理临时文件。
+
+    全程在后台线程；网络不可用等任何失败 → 调 on_fail（没有就算了），绝不抛。"""
+    def _run():
+        path = None
+        mci = None
+        try:
+            import ctypes
+            mci = ctypes.windll.winmm.mciSendStringW
+            mci.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint, ctypes.c_void_p]
+            url = "https://dict.youdao.com/dictvoice?audio=" + urllib.parse.quote(word) + "&type=2"
+            req = urllib.request.Request(url, headers={"User-Agent": "EasyTranslator/1.0"})
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                data = resp.read()
+            if not data or len(data) < 64:
+                raise RuntimeError("空音频")
+            fd, path = tempfile.mkstemp(suffix=".mp3", prefix="etvoice_")
+            os.close(fd)
+            with open(path, "wb") as f:
+                f.write(data)
+            alias = "etvoice"
+            mci("close %s" % alias, None, 0, None)
+            if mci('open "%s" type mpegvideo alias %s' % (path, alias), None, 0, None) != 0:
+                raise RuntimeError("MCI 打不开音频")
+            try:
+                mci("play %s wait" % alias, None, 0, None)
+            finally:
+                mci("close %s" % alias, None, 0, None)
+        except Exception:
+            if on_fail:
+                try:
+                    on_fail()
+                except Exception:
+                    pass
+        finally:
+            if path:
+                try:
+                    os.remove(path)
+                except Exception:
+                    pass
+    threading.Thread(target=_run, daemon=True, name="et-speak").start()

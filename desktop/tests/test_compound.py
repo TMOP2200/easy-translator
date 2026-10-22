@@ -68,3 +68,11 @@ def test_inner_word_set_is_lowercase_only():
     # 只有「小词」本身才会被视为可能的一截；实词不会
     assert need_compound_retry("Of", 900, 74) is True     # 大小写不敏感
     assert need_compound_retry("off", 900, 74) is False   # off 是实词，不是内部小词
+
+
+if __name__ == "__main__":
+    import os
+    import sys
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from _minipytest import run
+    raise SystemExit(run(globals()))

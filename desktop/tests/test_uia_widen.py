@@ -96,3 +96,11 @@ def test_broken_range_does_not_raise():
 
 def test_empty_word_unchanged():
     assert _uia_widen(FakeRange("abc def", 4, 7), "") == ""
+
+
+if __name__ == "__main__":
+    import os
+    import sys
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from _minipytest import run
+    raise SystemExit(run(globals()))

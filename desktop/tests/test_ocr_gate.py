@@ -6,6 +6,36 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from et_desktop import lookup as L          # noqa: E402
+from et_desktop import textgrab as TG       # noqa: E402
+
+
+class OcrEntryCase(unittest.TestCase):
+    """2026-10-05 回归点：word_at_point 走 OCR 兜底时必须传**根配置**。
+
+    旧 bug：调用处把 model 子树当整份配置传 → 闸门里的 cfg.get("imageOcr") 永远读不到
+    → 「图片取词」开关关了也照截图、照加载视觉模型。这里从 word_at_point 入口进，
+    专门锁住这个传参错误。
+    """
+
+    def setUp(self):
+        self._uia = TG.word_at_point_uia
+        self._grab = TG._grab_png
+
+    def tearDown(self):
+        TG.word_at_point_uia, TG._grab_png = self._uia, self._grab
+
+    def test_switch_off_blocks_ocr_from_entry(self):
+        called = {"grab": 0}
+        TG.word_at_point_uia = lambda x, y: (None, False)      # UIA 没字 → 落 OCR 兜底
+        def _grab(*a, **k):
+            called["grab"] += 1
+            return None
+        TG._grab_png = _grab
+        cfg = {"imageOcr": {"enabled": False},
+               "model": {"baseUrl": "http://127.0.0.1:9", "visionModel": "whatever"}}
+        word, src = TG.word_at_point(5, 5, cfg)     # 返回 (词, 来源) 元组
+        self.assertIsNone(word)
+        self.assertEqual(0, called["grab"], "开关关了还去截图 —— 传参又错了（应传根配置）")
 
 
 class TestAcceptWord(unittest.TestCase):

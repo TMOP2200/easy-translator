@@ -96,5 +96,33 @@ class TestNormalize(unittest.TestCase):
         self.assertIsNone(L.lookup_model("hello", {}))
 
 
+class ModelSwitchCase(unittest.TestCase):
+    """2026-10-05 回归点：「启用小模型」开关必须真的挡在模型调用之前。
+
+    旧 bug：全项目没人读 model.enabled —— 关了开关，auto 引擎在有道查不到时
+    照样去调模型（有 Ollama 的机器上会被偷偷加载）。
+    """
+
+    def test_switch_off_blocks_model_call(self):
+        called = {"n": 0}
+        orig_y, orig_m = L.lookup_youdao, L.lookup_model
+        try:
+            L.lookup_youdao = lambda w: None
+            def _m(*a, **k):
+                called["n"] += 1
+                return None
+            L.lookup_model = _m
+            self.assertIsNone(L.lookup("foobarbazzz", {"engine": "auto",
+                                                       "model": {"enabled": False}}))
+            self.assertEqual(0, called["n"], "开关关着还调模型")
+            L.lookup("foobarbazzz", {"engine": "auto",
+                                     "model": {"enabled": True,
+                                               "baseUrl": "http://127.0.0.1:9",
+                                               "textModel": "x"}})
+            self.assertEqual(1, called["n"], "开关开着就该走到模型")
+        finally:
+            L.lookup_youdao, L.lookup_model = orig_y, orig_m
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
