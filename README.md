@@ -4,7 +4,7 @@
 
 鼠标在英文单词上停留约 **5 秒**，自动弹出卡片：中文释义、英美音标、词性、双语例句、发音。
 
-![网页取词效果](docs/screenshot-web.png)
+![鲸鱼娘](docs/mascot-header.png)
 
 > 核心原则：**识别不到英文就绝不弹窗**。中文、数字、空白、乱码一律静默，不打断你的浏览。
 
@@ -74,6 +74,8 @@ curl http://127.0.0.1:11434/v1/chat/completions \
 
 浏览器之外的英文也能查：记事本、Word、微信、VS Code、PDF 阅读器……
 `desktop/` 是一个 Windows 伴生程序，**同样的悬停规则、同样的气泡 UI**（白底 + 藏青描边 + 右下角吉祥物）。
+
+> **Windows 桌面版（单文件 exe，双击即用）**：[下载最新版本](https://github.com/TMOP2200/easy-translator/releases/latest) —— 下载后双击运行，无需安装、无需管理员权限；退出程序后删除 exe 即完成卸载。
 
 ### 桌面伴生：一步步来
 

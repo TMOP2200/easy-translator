@@ -31,6 +31,7 @@ EXE = os.path.join(DIST, "Easy Translator.exe")
 
 RES = ((os.path.join(REPO, "assets", "decor.png"), "assets"),
        (os.path.join(REPO, "assets", "easy-translator.ico"), "assets"),
+       (os.path.join(REPO, "docs", "mascot-header.png"), "docs"),
        (os.path.join(REPO, "docs", "screenshot-web.png"), "docs"))
 ICON = os.path.join(REPO, "assets", "easy-translator.ico")
 

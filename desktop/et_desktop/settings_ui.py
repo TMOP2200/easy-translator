@@ -58,7 +58,7 @@ FONT_SMALL = ("Microsoft YaHei UI", 9)
 # **固定用 README 的头图**（用户明确要求「总览图不支持导入」）：只有这一张，
 # 点图或「打开原图」用系统看图程序打开原图。想换卡片右下角那张图，去「装饰图」大类。
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-README_SHOT = os.path.join(ui.res_dir(), "docs", "screenshot-web.png")   # README 头图（打包后从 _MEIPASS 拿）
+README_SHOT = os.path.join(ui.res_dir(), "docs", "mascot-header.png")   # README 头图（鲸鱼娘立绘；打包后从 _MEIPASS 拿）
 BANNER_W, BANNER_H = 860, 360        # 横幅上限尺寸（窄窗口按可用宽度等比缩；宽窗口也不会拉成一长条）
 CONTENT_MAX = 940                    # 卡片最大宽度：窗口再宽也不铺满，文字才读得舒服
 WRAP_DEFAULT = 640                   # 说明文字的初始折行宽度（窗口尺寸一变就由 _relayout 重算）
